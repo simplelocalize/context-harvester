@@ -4,6 +4,8 @@ import type { CodeOccurrence, KeyRef } from "./types.js";
 import { keyId } from "./types.js";
 
 export const MAX_OCCURRENCES_PER_KEY = 3;
+/** Upper bound of references kept per key; SimpleLocalize stores as many as fit and the number of the rest. */
+export const MAX_REFERENCES_PER_KEY = 200;
 const SNIPPET_CONTEXT_LINES = 6;
 const MAX_SNIPPET_LENGTH = 1500;
 const MAX_FILE_SIZE_BYTES = 1024 * 1024;
@@ -20,12 +22,19 @@ export interface SearchOptions {
   excludedFiles?: string[];
 }
 
+export interface KeyUsages {
+  /** Code around the first usages, sent to the AI model. */
+  occurrences: Map<string, CodeOccurrence[]>;
+  /** All usages as "path:line", in file and line order. */
+  references: Map<string, string[]>;
+}
+
 /**
  * Finds usages of translation keys in source code: quoted literals ("key", 'key', `key`, "namespace:key")
  * and Android resource references (R.string.key, @string/key). Each file is read once and matched against all keys.
  * Translation files and key definitions (a literal followed by ":" or "=") are not usages and are skipped.
  */
-export async function findOccurrences(keys: KeyRef[], options: SearchOptions): Promise<Map<string, CodeOccurrence[]>> {
+export async function findUsages(keys: KeyRef[], options: SearchOptions): Promise<KeyUsages> {
   const literalToIds = new Map<string, string[]>();
   const add = (literal: string, id: string) => literalToIds.set(literal, [...(literalToIds.get(literal) ?? []), id]);
   for (const ref of keys) {
@@ -34,7 +43,7 @@ export async function findOccurrences(keys: KeyRef[], options: SearchOptions): P
       add(`${ref.namespace}:${ref.key}`, keyId(ref));
     }
   }
-  const results = new Map<string, CodeOccurrence[]>();
+  const results: KeyUsages = { occurrences: new Map(), references: new Map() };
   if (literalToIds.size === 0) {
     return results;
   }
@@ -42,14 +51,13 @@ export async function findOccurrences(keys: KeyRef[], options: SearchOptions): P
   const matcher = await createExcludeMatcher(searchDir, options.exclude ?? []);
   const excludedFiles = new Set((options.excludedFiles ?? []).map((file) => path.resolve(file)));
   const maxLiteralLength = Math.max(...[...literalToIds.keys()].map((literal) => literal.length));
-  const keysCount = new Set(keys.map(keyId)).size;
-  let completedKeys = 0;
 
   for (const file of await listFiles(searchDir, matcher, excludedFiles)) {
-    completedKeys += await scanFile(searchDir, file, literalToIds, maxLiteralLength, results);
-    if (completedKeys >= keysCount) {
-      break;
-    }
+    await scanFile(searchDir, file, literalToIds, maxLiteralLength, results);
+  }
+  // quoted literals and Android references are matched in two passes, so lines of one file may be out of order
+  for (const references of results.references.values()) {
+    references.sort(compareReferences);
   }
   return results;
 }
@@ -84,40 +92,41 @@ async function scanFile(
   file: string,
   literalToIds: Map<string, string[]>,
   maxLiteralLength: number,
-  results: Map<string, CodeOccurrence[]>
-): Promise<number> {
+  results: KeyUsages
+): Promise<void> {
   let buffer: Buffer;
   try {
     if ((await stat(file)).size > MAX_FILE_SIZE_BYTES) {
-      return 0;
+      return;
     }
     buffer = await readFile(file);
   } catch {
-    return 0;
+    return;
   }
   if (buffer.subarray(0, BINARY_CHECK_BYTES).includes(0)) {
-    return 0;
+    return;
   }
   const content = buffer.toString("utf8");
   const relativePath = toPosix(path.relative(searchDir, file));
   let lineStarts: number[] | undefined;
-  let completedKeys = 0;
 
   const record = (ids: string[], offset: number) => {
     lineStarts ??= computeLineStarts(content);
     const lineIndex = lineIndexOf(lineStarts, offset);
+    const reference = `${relativePath}:${lineIndex + 1}`;
     let occurrence: CodeOccurrence | undefined;
     for (const id of ids) {
-      const occurrences = results.get(id) ?? [];
-      const sameLine = occurrences.some((o) => o.file === relativePath && o.line === lineIndex + 1);
-      if (occurrences.length >= MAX_OCCURRENCES_PER_KEY || sameLine) {
+      const references = results.references.get(id) ?? [];
+      if (references.includes(reference) || references.length >= MAX_REFERENCES_PER_KEY) {
         continue;
       }
-      occurrence ??= { file: relativePath, line: lineIndex + 1, code: buildSnippet(content, lineStarts, lineIndex, offset) };
-      occurrences.push(occurrence);
-      results.set(id, occurrences);
-      if (occurrences.length === MAX_OCCURRENCES_PER_KEY) {
-        completedKeys++;
+      references.push(reference);
+      results.references.set(id, references);
+      const occurrences = results.occurrences.get(id) ?? [];
+      if (occurrences.length < MAX_OCCURRENCES_PER_KEY) {
+        occurrence ??= { file: relativePath, line: lineIndex + 1, code: buildSnippet(content, lineStarts, lineIndex, offset) };
+        occurrences.push(occurrence);
+        results.occurrences.set(id, occurrences);
       }
     }
   };
@@ -143,7 +152,17 @@ async function scanFile(
       record(ids, match.index ?? 0);
     }
   }
-  return completedKeys;
+}
+
+function compareReferences(a: string, b: string): number {
+  const [fileA, lineA] = splitReference(a);
+  const [fileB, lineB] = splitReference(b);
+  return fileA.localeCompare(fileB) || lineA - lineB;
+}
+
+function splitReference(reference: string): [string, number] {
+  const separator = reference.lastIndexOf(":");
+  return [reference.slice(0, separator), Number(reference.slice(separator + 1))];
 }
 
 function findClosingQuote(content: string, start: number, quote: string, maxLiteralLength: number): number {

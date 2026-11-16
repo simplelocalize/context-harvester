@@ -27,33 +27,50 @@ describe("toEntries", () => {
 });
 
 describe("AnthropicProvider", () => {
-  it("asks for structured output with refusal fallbacks and returns parsed descriptions", async () => {
-    let params: Record<string, unknown> = {};
-    const client = {
-      beta: {
-        messages: {
-          parse: async (request: Record<string, unknown>) => {
-            params = request;
-            return { stop_reason: "end_turn", stop_details: null, parsed_output: { descriptions: [{ key: "checkout.pay", namespace: "web", context: "Pay button" }] } };
-          }
-        }
-      }
-    };
+  const answer = (descriptions: unknown) => ({
+    body: {
+      stop_reason: "end_turn",
+      stop_details: null,
+      content: [{ type: "thinking", thinking: "" }, { type: "text", text: JSON.stringify({ descriptions }) }]
+    }
+  });
 
-    const entries = await new AnthropicProvider(undefined, client as never).describe(keys);
+  it("asks for structured output with refusal fallbacks and returns parsed descriptions", async () => {
+    const { fetchImpl, requests } = mockFetch(() => answer([{ key: "checkout.pay", namespace: "web", context: "Pay button" }]));
+
+    const entries = await new AnthropicProvider({ apiKey: "sk-ant-test", fetch: fetchImpl }).describe(keys);
 
     expect(entries.map((e) => e.context)).toEqual(["Pay button"]);
-    expect(params.model).toBe("claude-opus-5-5");
-    expect(params.fallbacks).toBe("default");
-    expect(params.betas).toEqual(["server-side-fallback-2026-07-01"]);
-    expect((params.output_config as { effort: string }).effort).toBe("medium");
-    expect(JSON.stringify(params.messages)).toContain("src/Pay.tsx");
+    expect(requests[0].url.toString()).toBe("https://api.anthropic.com/v1/messages");
+    expect(requests[0].headers).toMatchObject({
+      "x-api-key": "sk-ant-test",
+      "anthropic-version": "2026-10-21",
+      "anthropic-beta": "server-side-fallback-2026-07-01"
+    });
+    const body = requests[0].body as Record<string, any>;
+    expect(body.model).toBe("claude-opus-5-5");
+    expect(body.fallbacks).toBe("default");
+    expect(body.output_config.effort).toBe("medium");
+    expect(body.output_config.format.type).toBe("json_schema");
+    expect(JSON.stringify(body.messages)).toContain("src/Pay.tsx");
   });
 
   it("fails the batch on refusal", async () => {
-    const client = { beta: { messages: { parse: async () => ({ stop_reason: "refusal", stop_details: { category: "cyber" }, parsed_output: null }) } } };
+    const { fetchImpl } = mockFetch(() => ({ body: { stop_reason: "refusal", stop_details: { category: "cyber" }, content: [] } }));
 
-    await expect(new AnthropicProvider(undefined, client as never).describe(keys)).rejects.toThrow("declined");
+    await expect(new AnthropicProvider({ apiKey: "k", fetch: fetchImpl }).describe(keys)).rejects.toThrow("declined to describe this batch (cyber)");
+  });
+
+  it("retries rate limited requests", async () => {
+    let calls = 0;
+    const { fetchImpl } = mockFetch(() => ++calls === 1
+      ? { status: 429, body: { error: { type: "rate_limit_error" } } }
+      : answer([{ key: "checkout.pay", namespace: "web", context: "Pay button" }]));
+
+    const entries = await new AnthropicProvider({ apiKey: "k", fetch: fetchImpl, retryDelayMs: 0 }).describe(keys);
+
+    expect(calls).toBe(2);
+    expect(entries).toHaveLength(1);
   });
 });
 
@@ -74,8 +91,8 @@ describe("OpenAiProvider", () => {
 
 describe("createProvider", () => {
   it("picks the provider from the available key", () => {
-    expect(createProvider(undefined, undefined, { ANTHROPIC_API_KEY: "a", OPENAI_API_KEY: "o" }).name).toBe("anthropic");
-    expect(createProvider(undefined, undefined, { OPENAI_API_KEY: "o" }).name).toBe("openai");
-    expect(() => createProvider(undefined, undefined, {})).toThrow("No AI provider configured");
+    expect(createProvider(undefined, { ANTHROPIC_API_KEY: "a", OPENAI_API_KEY: "o" }).name).toBe("anthropic");
+    expect(createProvider(undefined, { OPENAI_API_KEY: "o" }).name).toBe("openai");
+    expect(() => createProvider(undefined, {})).toThrow("No AI provider configured");
   });
 });

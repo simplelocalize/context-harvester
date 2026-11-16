@@ -18,13 +18,14 @@ npx @simplelocalize/context-harvester upload   # upload the reviewed file
 2. Searches your code for their usages: quoted keys (`t("checkout.pay")`, `'web:checkout.pay'`) and Android resources
    (`R.string.welcome`, `@string/welcome`). Translation files, build output, `node_modules` and `.gitignore` entries are
    skipped.
-3. Sends the key, its source text and a few lines of code around each usage to an AI model, in batches of 20 keys.
-4. Saves the descriptions to `simplelocalize-context.json`. Entries already in the file are never changed, so your
-   edits are safe when you run it again.
+3. Sends the key, its source text and a few lines of code around up to 3 usages to an AI model, in batches of 20 keys.
+4. Saves the descriptions and all usages (`references`) to `simplelocalize-context.json`. Descriptions already in the
+   file are never changed, so your edits are safe when you run it again; their references are refreshed on every run,
+   without AI, so they follow your code.
 5. You review and edit the file (for example in a pull request), then run `upload`.
 
 `upload` only updates **existing** keys: it never creates or deletes keys, and by default it doesn't replace a
-description a key already has.
+description a key already has. References are uploaded too (use `--no-references` to keep them in the file only).
 
 ## Quick start
 
@@ -65,7 +66,7 @@ If your repository has a `simplelocalize.yml` with `apiKey`, it is used automati
 | `key` | Translation key. |
 | `namespace` | Namespace of the key, omitted when the key has none. |
 | `context` | The description. Edit it freely; up to 500 characters. An empty `context` is skipped on upload. |
-| `references` | Where the key is used in your code. Kept in the file for reviewers, not uploaded. |
+| `references` | Where the key is used in your code, as `path:line`. Refreshed on every run. |
 
 The file is sorted by namespace and key, so diffs stay small. Commit it to your repository.
 
@@ -79,38 +80,41 @@ context-harvester upload [options]
 | Option | Commands | Default | Description |
 |---|---|---|---|
 | `--api-key` | both | `SIMPLELOCALIZE_API_KEY`, then `apiKey` from `simplelocalize.yml` | SimpleLocalize project API key |
-| `--base-url` | both | `SIMPLELOCALIZE_API_URL` or `https://api.simplelocalize.io` | API URL |
 | `-c`, `--context` | both | `simplelocalize-context.json` | Context file |
 | `--dry-run` | both | off | Show what would change without writing or uploading anything |
-| `--overwrite` | both | off | harvest: describe keys already in the file again; upload: replace existing descriptions |
+| `--overwrite` | both | off | harvest: describe keys already in the file again; upload: replace existing code descriptions |
 | `--search-dir` | harvest | `.` | Directory with your source code |
 | `--exclude` | harvest | | Glob to skip, repeatable, e.g. `--exclude "**/*.test.ts" --exclude legacy` |
 | `--namespace` | harvest | all | Only keys from this namespace |
 | `--limit` | harvest | `200` | Max keys per run |
-| `--batch-size` | harvest | `20` | Keys per AI request |
-| `--provider` | harvest | the one with a key set (`ANTHROPIC_API_KEY` first) | `anthropic` or `openai` |
 | `--model` | harvest | `claude-opus-5-5` / `gpt-5.4` | AI model |
-| `--field` | upload | `codeDescription` | `codeDescription` (shown read-only in the editor) or `description` (editable by translators) |
+| `--no-references` | upload | off | Don't upload references, keep them in the file only |
+
+`SIMPLELOCALIZE_API_URL` changes the SimpleLocalize API URL (default `https://api.simplelocalize.io`).
 
 ### Where descriptions go
 
-By default `upload` writes to the key's **code description**. It is visible to translators and used by
-SimpleLocalize AI translation, but it is read-only in the editor, because the file in your repository is its source of
-truth: to change it, edit the file and upload again. Use `--field description` if you'd rather have translators edit
-it in SimpleLocalize.
+`upload` writes to the key's **code description**. It is visible to translators and used by SimpleLocalize AI
+translation, but it is read-only in the editor, because the file in your repository is its source of truth: to change
+it, edit the file and upload again. The translator description stays for translators and is never changed.
 
 Keys that already have a description (written by a translator, or a comment imported from your translation files) are
 not described again and are not overwritten on upload unless you pass `--overwrite`.
 
 ## AI providers and privacy
 
-- **Anthropic** (default when `ANTHROPIC_API_KEY` is set): `claude-opus-5-5`, structured JSON output.
-- **OpenAI** (when `OPENAI_API_KEY` is set or `--provider openai`): `gpt-5.4`. `OPENAI_BASE_URL` points it to a
-  compatible endpoint.
+The provider is picked from the API key you set:
+
+- **Anthropic** when `ANTHROPIC_API_KEY` is set (it wins when both keys are set): `claude-opus-5-5`.
+- **OpenAI** when only `OPENAI_API_KEY` is set: `gpt-5.4`. `OPENAI_BASE_URL` points it to a compatible endpoint.
+
+Both are called with structured JSON output and keys are sent in batches of 20. The package has no runtime
+dependencies, so `npx` starts quickly.
 
 The tool calls the provider directly with your key. The AI provider receives the key name, its source text and up to
-3 snippets of about 13 lines of code around its usages; nothing else from your repository is read by the model, and
-your code is not sent to SimpleLocalize. Use `--exclude` for paths that must not leave your machine.
+3 snippets of about 13 lines of code around its usages; nothing else from your repository is read by the model.
+Your code is not sent to SimpleLocalize: `upload` sends the descriptions and the references (file paths and line
+numbers), or only the descriptions with `--no-references`. Use `--exclude` for paths that must not leave your machine.
 
 ## Running in CI
 

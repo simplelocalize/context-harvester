@@ -8,15 +8,15 @@ describe("SimpleLocalizeClient", () => {
       const page = request.url.searchParams.get("page");
       return page === "0"
         ? { body: { data: [{ key: "a", namespace: "", description: "", codeDescription: "" }], pageDetails: { hasNext: true } } }
-        : { body: { data: [{ key: "b", namespace: "web", description: "Human note", codeDescription: "" }], pageDetails: { hasNext: false } } };
+        : { body: { data: [{ key: "b", namespace: "web", description: "Human note", codeDescription: "", codeReferences: ["src/B.tsx:3"], codeReferencesCount: 12 }], pageDetails: { hasNext: false } } };
     });
     const client = new SimpleLocalizeClient({ apiKey: "project-key", baseUrl: "https://api.test/", fetch: fetchImpl });
 
     const keys = await client.listTranslationKeys();
 
     expect(keys).toEqual([
-      { key: "a", namespace: "", description: "", codeDescription: "" },
-      { key: "b", namespace: "web", description: "Human note", codeDescription: "" }
+      { key: "a", namespace: "", description: "", codeDescription: "", codeReferences: [], codeReferencesCount: 0 },
+      { key: "b", namespace: "web", description: "Human note", codeDescription: "", codeReferences: ["src/B.tsx:3"], codeReferencesCount: 12 }
     ]);
     expect(requests.map((r) => `${r.url.pathname}?${r.url.searchParams}`)).toEqual([
       "/api/v1/translation-keys?page=0&size=2500",
@@ -37,20 +37,17 @@ describe("SimpleLocalizeClient", () => {
     expect(requests[1].url.searchParams.get("baseOnly")).toBe("true");
   });
 
-  it("updates code description or description of an existing key and reports missing keys", async () => {
+  it("updates code description and places in code of an existing key in one request and reports missing keys", async () => {
     const { fetchImpl, requests } = mockFetch((request) => request.url.searchParams.get("key") === "missing"
       ? { status: 400, body: { msg: "Translation key does not exists", status: 400 } }
       : { body: { msg: "OK" } });
     const client = new SimpleLocalizeClient({ apiKey: "k", baseUrl: "https://api.test", fetch: fetchImpl });
 
-    expect(await client.updateDescription({ key: "pay", namespace: "web" }, "codeDescription", "Pay button")).toBe("updated");
-    expect(await client.updateDescription({ key: "pay", namespace: "" }, "description", "Pay button")).toBe("updated");
-    expect(await client.updateDescription({ key: "missing", namespace: "" }, "codeDescription", "x")).toBe("not_found");
+    expect(await client.updateKey({ key: "pay", namespace: "web" }, { codeDescription: "Pay button", codeReferences: ["src/Pay.tsx:4"] })).toBe("updated");
+    expect(await client.updateKey({ key: "missing", namespace: "" }, { codeDescription: "x" })).toBe("not_found");
 
-    expect(requests[0]).toMatchObject({ method: "PATCH", body: { codeDescription: "Pay button" } });
+    expect(requests[0]).toMatchObject({ method: "PATCH", body: { codeDescription: "Pay button", codeReferences: ["src/Pay.tsx:4"] } });
     expect(`${requests[0].url.pathname}?${requests[0].url.searchParams}`).toBe("/api/v1/translation-keys?key=pay&namespace=web");
-    expect(requests[1].url.pathname).toBe("/api/v1/translation-keys/description");
-    expect(requests[1].body).toEqual({ description: "Pay button" });
   });
 
   it("retries rate limited requests and explains rejected API keys", async () => {

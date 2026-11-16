@@ -4,11 +4,18 @@ import { keyId } from "./types.js";
 export interface TranslationKey extends KeyRef {
   description: string;
   codeDescription: string;
+  /** Stored places in code; empty when the key has none. */
+  codeReferences: string[];
+  /** Number of all places in code, also those that did not fit in codeReferences. */
+  codeReferencesCount: number;
 }
 
-export type DescriptionField = "codeDescription" | "description";
-
 export type UpdateResult = "updated" | "not_found";
+
+export interface KeyChanges {
+  codeDescription?: string;
+  codeReferences?: string[];
+}
 
 export interface SimpleLocalizeClientOptions {
   apiKey: string;
@@ -53,15 +60,22 @@ export class SimpleLocalizeClient {
   }
 
   async listTranslationKeys(): Promise<TranslationKey[]> {
-    const items = await this.paged<{ key: string; namespace?: string; description?: string; codeDescription?: string }>(
-      "/api/v1/translation-keys",
-      {}
-    );
+    const items = await this.paged<{
+      key: string;
+      namespace?: string;
+      description?: string;
+      codeDescription?: string;
+      codeReferences?: string[];
+      codeReferencesCount?: number;
+    }>("/api/v1/translation-keys", {});
     return items.map((item) => ({
       key: item.key,
       namespace: item.namespace ?? "",
       description: item.description ?? "",
-      codeDescription: item.codeDescription ?? ""
+      codeDescription: item.codeDescription ?? "",
+      // both are omitted for keys without places in code
+      codeReferences: Array.isArray(item.codeReferences) ? item.codeReferences : [],
+      codeReferencesCount: typeof item.codeReferencesCount === "number" ? item.codeReferencesCount : 0
     }));
   }
 
@@ -80,12 +94,14 @@ export class SimpleLocalizeClient {
     return texts;
   }
 
-  /** Updates one description field of an existing key. Never creates keys. */
-  async updateDescription(ref: KeyRef, field: DescriptionField, value: string): Promise<UpdateResult> {
+  /**
+   * Updates the code description and/or places in code of an existing key in one request; fields left out are not
+   * changed and an empty list of places clears them. Never creates keys.
+   */
+  async updateKey(ref: KeyRef, changes: KeyChanges): Promise<UpdateResult> {
     const query = new URLSearchParams({ key: ref.key, namespace: ref.namespace ?? "" });
-    const path = field === "description" ? "/api/v1/translation-keys/description" : "/api/v1/translation-keys";
     try {
-      await this.request("PATCH", `${path}?${query}`, { [field]: value });
+      await this.request("PATCH", `/api/v1/translation-keys?${query}`, changes);
       return "updated";
     } catch (error) {
       if (error instanceof SimpleLocalizeApiError && (error.status === 404 || (error.status === 400 && /does not exist/i.test(error.body)))) {

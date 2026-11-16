@@ -20,6 +20,38 @@ export function buildUserMessage(keys: KeyToDescribe[]): string {
   return `Translation keys:\n${JSON.stringify(payload, null, 2)}`;
 }
 
+/** Structured output schema shared by all providers: one note per key. */
+export const RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["descriptions"],
+  properties: {
+    descriptions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["key", "namespace", "context"],
+        properties: {
+          key: { type: "string" },
+          namespace: { type: "string" },
+          context: { type: "string" }
+        }
+      }
+    }
+  }
+};
+
+/** Parses the JSON text returned by a provider into descriptions. */
+export function parseDescriptions(text: string | undefined): RawDescription[] {
+  try {
+    const parsed = JSON.parse(text ?? "") as { descriptions?: RawDescription[] };
+    return Array.isArray(parsed.descriptions) ? parsed.descriptions : [];
+  } catch {
+    throw new Error("The model returned a response that doesn't match the expected format");
+  }
+}
+
 export interface RawDescription {
   key: string;
   namespace: string;

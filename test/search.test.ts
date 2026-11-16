@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { findOccurrences, globToRegExp } from "../src/search.js";
+import { findUsages, globToRegExp } from "../src/search.js";
 import { keyId } from "../src/types.js";
 import { createRepo } from "./helpers.js";
 
-describe("findOccurrences", () => {
+describe("findUsages", () => {
   it("finds quoted usages with line numbers and code around them", async () => {
     const root = await createRepo({
       "src/Checkout.tsx": "import { t } from 'i18n';\n\nexport const Pay = () => (\n  <button>{t(\"checkout.pay\")}</button>\n);\n"
     });
 
-    const result = await findOccurrences([{ key: "checkout.pay", namespace: "" }], { searchDir: root });
+    const result = (await findUsages([{ key: "checkout.pay", namespace: "" }], { searchDir: root })).occurrences;
 
     const occurrences = result.get(keyId({ key: "checkout.pay", namespace: "" }));
     expect(occurrences).toHaveLength(1);
@@ -33,7 +33,7 @@ describe("findOccurrences", () => {
       "src/app.ts": "if (key === 'checkout.pay') { t('checkout.pay') }"
     });
 
-    const result = await findOccurrences([{ key: "checkout.pay", namespace: "" }], { searchDir: root, exclude: ["src/legacy/**"] });
+    const result = (await findUsages([{ key: "checkout.pay", namespace: "" }], { searchDir: root, exclude: ["src/legacy/**"] })).occurrences;
 
     const occurrences = result.get(keyId({ key: "checkout.pay", namespace: "" }))!;
     expect(occurrences.map((o) => o.file)).toEqual(["src/app.ts"]);
@@ -46,10 +46,10 @@ describe("findOccurrences", () => {
       "app/src/main/res/layout/main.xml": "<TextView android:text=\"@string/welcome_title\" />"
     });
 
-    const result = await findOccurrences([
+    const result = (await findUsages([
       { key: "checkout.title", namespace: "web" },
       { key: "welcome_title", namespace: "" }
-    ], { searchDir: root });
+    ], { searchDir: root })).occurrences;
 
     expect(result.get(keyId({ key: "checkout.title", namespace: "web" }))!.map((o) => o.file)).toEqual(["src/i18n.ts"]);
     expect(result.get(keyId({ key: "welcome_title", namespace: "" }))!.map((o) => o.file).sort())
@@ -64,9 +64,18 @@ describe("findOccurrences", () => {
       "image.bin": Buffer.from([0x74, 0x28, 0x27, 0x6b, 0x27, 0x29, 0x00])
     });
 
-    const result = await findOccurrences([{ key: "k", namespace: "" }], { searchDir: root });
+    const result = await findUsages([{ key: "k", namespace: "" }], { searchDir: root });
 
-    expect(result.get(keyId({ key: "k", namespace: "" }))!.map((o) => `${o.file}:${o.line}`)).toEqual(["a.ts:1", "a.ts:2", "b.ts:1"]);
+    expect(result.occurrences.get(keyId({ key: "k", namespace: "" }))!.map((o) => `${o.file}:${o.line}`)).toEqual(["a.ts:1", "a.ts:2", "b.ts:1"]);
+    expect(result.references.get(keyId({ key: "k", namespace: "" }))).toEqual(["a.ts:1", "a.ts:2", "b.ts:1", "c.ts:1"]);
+  });
+
+  it("lists references in line order when a file has both quoted keys and Android references", async () => {
+    const root = await createRepo({ "Main.kt": "getString(R.string.title)\nval key = \"title\"\nsetTitle(R.string.title)" });
+
+    const result = await findUsages([{ key: "title", namespace: "" }], { searchDir: root });
+
+    expect(result.references.get(keyId({ key: "title", namespace: "" }))).toEqual(["Main.kt:1", "Main.kt:2", "Main.kt:3"]);
   });
 });
 
