@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.1
+## 1.1.0
 
 - `harvest` saves all usages of each key as `references` and refreshes them for keys already in the file on every
   run, without AI.
