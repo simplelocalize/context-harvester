@@ -1,0 +1,61 @@
+{
+  "name": "@simplelocalize/context-harvester",
+  "version": "1.0.0",
+  "description": "Generate context descriptions for translation keys from your source code with AI and upload them to SimpleLocalize",
+  "license": "MIT",
+  "author": "SimpleLocalize (https://simplelocalize.io)",
+  "homepage": "https://github.com/simplelocalize/context-harvester#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simplelocalize/context-harvester.git"
+  },
+  "bugs": {
+    "url": "https://github.com/simplelocalize/context-harvester/issues"
+  },
+  "keywords": [
+    "simplelocalize",
+    "i18n",
+    "l10n",
+    "localization",
+    "translation",
+    "context",
+    "ai",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "context-harvester": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
